@@ -13,16 +13,12 @@ class Program
         var (cookie, language) = Usage(args);
         var extensions = await GetCodeExtension(cookie, language);
 
-        // Defina o número máximo de páginas de submissões
-        for (var page = 1; page <= 46; page++)
+        // Repetir enquando houver próxima página
+        var page = 1;
+        do
         {
-            var hasNextPage = await SubmissionPage(page, cookie, language, extensions);
-            if (!hasNextPage)
-            {
-                break;
-            }
-        }
-
+            Console.WriteLine($"Page {page}");
+        } while (await SubmissionPage(page++, cookie, language, extensions));
     }
 
     static (string Cookie, string Language) Usage(string[] args)
@@ -78,12 +74,12 @@ dotnet run --lang en --cookie ""csrfTokenXXXX%2Fcollect""";
             foreach (var href in distinctLinkHref)
                 await GetCode($"https://www.beecrowd.com.br{href}", cookie, lang,
                     extensions);
-
         }
         catch (HttpRequestException e)
         {
             Console.WriteLine($"Erro ao fazer a solicitação HTTP SubmissionPage: {e.Message}");
         }
+
         return hasNextPage;
     }
 
