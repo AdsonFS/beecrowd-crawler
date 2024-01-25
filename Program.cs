@@ -10,10 +10,10 @@ class Program
 
     private static async Task Main(string[] args)
     {
-        var (cookie, language) = Usage(args);
-        var extensions = await GetCodeExtension(cookie, language);
+        var (language, cookie) = Usage(args);
+        var extensions = await GetCodeExtension(language, cookie);
 
-        // Repetir enquando houver próxima página
+        // Repetir enquanto houver próxima página
         var page = 1;
         do
         {
@@ -21,12 +21,12 @@ class Program
         } while (await SubmissionPage(page++, cookie, language, extensions));
     }
 
-    static (string Cookie, string Language) Usage(string[] args)
+    static (string Language, string Cookie) Usage(string[] args)
     {
-        var cookie = GetValueFromArgs(args, "cookie");
         var language = GetValueFromArgs(args, "lang");
+        var cookie = GetValueFromArgs(args, "cookie");
 
-        if (cookie == null || language == null)
+        if (language == null || cookie == null)
         {
             var invalidArgumentsMessage = @"Invalid arguments.
 Usage:
@@ -36,7 +36,7 @@ dotnet run --lang en --cookie ""csrfTokenXXXX%2Fcollect""";
             Environment.Exit(1);
         }
 
-        return (Cookie: HttpUtility.UrlDecode(cookie), language);
+        return (language, Cookie: HttpUtility.UrlDecode(cookie));
     }
 
     static async Task<bool> SubmissionPage(int page, string cookie, string lang, Dictionary<string, string> extensions)
@@ -141,7 +141,7 @@ dotnet run --lang en --cookie ""csrfTokenXXXX%2Fcollect""";
         }
     }
 
-    static async Task<Dictionary<string, string>> GetCodeExtension(string cookie, string lang)
+    static async Task<Dictionary<string, string>> GetCodeExtension(string lang, string cookie)
     {
         var url = $"https://www.beecrowd.com.br/judge/{lang}/problems/view/1000";
         var extensions = new Dictionary<string, string>();
