@@ -15,7 +15,14 @@ class Program
 
         // Defina o número máximo de páginas de submissões
         for (var page = 1; page <= 46; page++)
-            await SubmissionPage(page, cookie, language, extensions);
+        {
+            var hasNextPage = await SubmissionPage(page, cookie, language, extensions);
+            if (!hasNextPage)
+            {
+                break;
+            }
+        }
+
     }
 
     static (string Cookie, string Language) Usage(string[] args)
@@ -36,8 +43,9 @@ dotnet run --lang en --cookie ""csrfTokenXXXX%2Fcollect""";
         return (Cookie: HttpUtility.UrlDecode(cookie), language);
     }
 
-    static async Task SubmissionPage(int page, string cookie, string lang, Dictionary<string, string> extensions)
+    static async Task<bool> SubmissionPage(int page, string cookie, string lang, Dictionary<string, string> extensions)
     {
+        var hasNextPage = false;
         var url =
             $"https://www.beecrowd.com.br/judge/{lang}/runs?answer_id=1&page={page}&sort=created&direction=asc";
 
@@ -55,6 +63,8 @@ dotnet run --lang en --cookie ""csrfTokenXXXX%2Fcollect""";
             var htmlDocument = new HtmlDocument();
             htmlDocument.LoadHtml(html);
 
+            hasNextPage = htmlDocument.DocumentNode.SelectNodes("//li[@class='next disabled']").Count == 0;
+
             var links = htmlDocument.DocumentNode.SelectNodes(
                 $"//a[starts-with(@href, '/judge/{lang}/runs/code/')]");
             // Filter out duplicates based on OuterHtml using LINQ
@@ -68,11 +78,13 @@ dotnet run --lang en --cookie ""csrfTokenXXXX%2Fcollect""";
             foreach (var href in distinctLinkHref)
                 await GetCode($"https://www.beecrowd.com.br{href}", cookie, lang,
                     extensions);
+
         }
         catch (HttpRequestException e)
         {
             Console.WriteLine($"Erro ao fazer a solicitação HTTP SubmissionPage: {e.Message}");
         }
+        return hasNextPage;
     }
 
     static async Task GetCode(string url, string cookie, string lang, Dictionary<string, string> extensions)
