@@ -209,3 +209,6 @@ codes
 
 bin/
 obj/
+
+publish
+.DS_Store
