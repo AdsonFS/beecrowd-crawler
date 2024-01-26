@@ -1,92 +1,195 @@
-﻿using System;
-using System.Net.Http;
+﻿using System.Net;
+using System.Text.Json;
 using System.Web;
 using HtmlAgilityPack;
 
 class Program
 {
-    static async Task Main(string[] args)
+    private const string UserAgent =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36";
+
+    private static async Task Main(string[] args)
     {
-        // Defina o numero maximo de paginas de submissoes
-        for (int page = 1; page <= 46; page++)
-            await SubmissionPage(page);
+        var (language, cookie) = Usage(args);
+        var extensions = await GetCodeExtension(language, cookie);
+
+        // Repetir enquanto houver próxima página
+        var page = 1;
+        do
+        {
+            Console.WriteLine($"Page {page}");
+        } while (await SubmissionPage(page++, cookie, language, extensions));
     }
 
-    static async Task SubmissionPage(int page)
+    static (string Language, string Cookie) Usage(string[] args)
     {
-        string url = $"https://www.beecrowd.com.br/judge/pt/runs?answer_id=1&page={page}&sort=created&direction=asc";
+        var language = GetValueFromArgs(args, "lang");
+        var cookie = GetValueFromArgs(args, "cookie");
+
+        if (language == null || cookie == null)
+        {
+            var invalidArgumentsMessage = @"Invalid arguments.
+Usage:
+dotnet run --lang en --cookie ""csrfTokenXXXX%2Fcollect""";
+            Console.WriteLine(invalidArgumentsMessage);
+            // Exit with code 1 indicating invalid arguments
+            Environment.Exit(1);
+        }
+
+        return (language, Cookie: HttpUtility.UrlDecode(cookie));
+    }
+
+    static async Task<bool> SubmissionPage(int page, string cookie, string lang, Dictionary<string, string> extensions)
+    {
+        var hasNextPage = false;
+        var url =
+            $"https://www.beecrowd.com.br/judge/{lang}/runs?answer_id=1&page={page}&sort=created&direction=asc";
 
         // Usando HttpClient para obter o HTML da página
-        using (HttpClient client = new HttpClient())
+        using var client = new HttpClient();
+        try
         {
-            try
+            client.DefaultRequestHeaders.Add("cookie", cookie);
+            client.DefaultRequestHeaders.Add("user-agent", UserAgent);
+
+            // Obtendo o HTML da página
+            var html = await client.GetStringAsync(url);
+
+            // Usando o HtmlAgilityPack para analisar o HTML
+            var htmlDocument = new HtmlDocument();
+            htmlDocument.LoadHtml(html);
+
+            hasNextPage = htmlDocument.DocumentNode.SelectNodes("//li[@class='next disabled']").Count == 0;
+
+            var links = htmlDocument.DocumentNode.SelectNodes(
+                $"//a[starts-with(@href, '/judge/{lang}/runs/code/')]");
+            // Filter out duplicates based on OuterHtml using LINQ
+            var distinctLinkHref = links?
+                .Where(linkNode => linkNode != null)
+                .Select(linkNode => linkNode.GetAttributeValue("href", ""))
+                .Distinct()
+                .ToList() ?? []; // Provide an empty list if null;
+
+            Console.WriteLine($"Requesting {distinctLinkHref.Count} problems");
+            foreach (var href in distinctLinkHref)
+                await GetCode($"https://www.beecrowd.com.br{href}", cookie, lang,
+                    extensions);
+        }
+        catch (HttpRequestException e)
+        {
+            Console.WriteLine($"Erro ao fazer a solicitação HTTP SubmissionPage: {e.Message}");
+        }
+
+        return hasNextPage;
+    }
+
+    static async Task GetCode(string url, string cookie, string lang, Dictionary<string, string> extensions)
+    {
+        using var client = new HttpClient();
+        try
+        {
+            client.DefaultRequestHeaders.Add("cookie", cookie);
+            client.DefaultRequestHeaders.Add("user-agent",
+                UserAgent);
+
+            // Obtendo o HTML da página
+            var html = await client.GetStringAsync(url);
+
+            // Usando o HtmlAgilityPack para analisar o HTML
+            var htmlDocument = new HtmlDocument();
+            htmlDocument.LoadHtml(html);
+
+            var code = htmlDocument.DocumentNode.SelectNodes("//pre[@id='code']").FirstOrDefault();
+            var codeLanguage = code?.GetAttributeValue("class", null);
+            var codeLanguageKey = codeLanguage != null ? codeLanguage.Replace("code-", "") : "";
+            var codeExtension = extensions.GetValueOrDefault(codeLanguageKey, "txt");
+            var link = htmlDocument.DocumentNode.SelectNodes(
+                $"//a[starts-with(@href, '/judge/{lang}/problems/view/')]");
+            var problemNumber = link.FirstOrDefault()?.GetAttributeValue("href", "").Split('/').Last() ?? "error";
+            Console.WriteLine($"Downloading {problemNumber}.{codeExtension}");
+
+            if (code != null)
             {
-                client.DefaultRequestHeaders.Add("cookie", "<your_cokie>");
-                client.DefaultRequestHeaders.Add("user-agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36");
+                const string directoryPath = "codes";
+                // Check if the directory exists, and create it if not
+                if (!Directory.Exists(directoryPath))
+                {
+                    Directory.CreateDirectory(directoryPath);
+                }
 
-                // Obtendo o HTML da página
-                string html = await client.GetStringAsync(url);
-
-                // Usando o HtmlAgilityPack para analisar o HTML
-                HtmlDocument htmlDocument = new HtmlDocument();
-                htmlDocument.LoadHtml(html);
-
-                var links = htmlDocument.DocumentNode.SelectNodes("//a[starts-with(@href, '/judge/pt/runs/code/')]");
-                foreach (var link in links)
-                    await GetCode($"https://www.beecrowd.com.br{link.GetAttributeValue("href", "")}");
+                // Specify the file path
+                var filePath = Path.Combine(directoryPath, $"{problemNumber}.{codeExtension}");
+                try
+                {
+                    // Escrever texto no arquivo
+                    await using var writer = new StreamWriter(filePath);
+                    await writer.WriteAsync(HttpUtility.HtmlDecode(code.InnerHtml));
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Ocorreu um erro ao escrever no arquivo: {ex.Message}");
+                }
             }
-            catch (HttpRequestException e)
+            else
             {
-                Console.WriteLine($"Erro ao fazer a solicitação HTTP: {e.Message}");
+                Console.WriteLine("Nenhum código encontrado na página.");
             }
+        }
+        catch (HttpRequestException e)
+        {
+            Console.WriteLine($"Erro ao fazer a solicitação HTTP GetCode: {e.Message}");
         }
     }
 
-    static async Task GetCode(string url)
+    static async Task<Dictionary<string, string>> GetCodeExtension(string lang, string cookie)
     {
-        using (HttpClient client = new HttpClient())
+        var url = $"https://www.beecrowd.com.br/judge/{lang}/problems/view/1000";
+        var extensions = new Dictionary<string, string>();
+
+        using var client = new HttpClient();
+        try
         {
-            try
+            client.DefaultRequestHeaders.Add("cookie", cookie);
+            client.DefaultRequestHeaders.Add("user-agent", UserAgent);
+
+            // Obtendo o HTML da página
+            var html = await client.GetStringAsync(url);
+
+            // Usando o HtmlAgilityPack para analisar o HTML
+            var htmlDocument = new HtmlDocument();
+            htmlDocument.LoadHtml(html);
+
+            var options = htmlDocument.DocumentNode.SelectNodes("//select[@id='language-id']/option");
+            foreach (var option in options)
             {
-                client.DefaultRequestHeaders.Add("cookie", "<your_cokie>");
-                client.DefaultRequestHeaders.Add("user-agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36");
-
-                // Obtendo o HTML da página
-                string html = await client.GetStringAsync(url);
-
-                // Usando o HtmlAgilityPack para analisar o HTML
-                HtmlDocument htmlDocument = new HtmlDocument();
-                htmlDocument.LoadHtml(html);
-
-                var code = htmlDocument.DocumentNode.SelectNodes("//pre[@id='code']").FirstOrDefault();
-                var link = htmlDocument.DocumentNode.SelectNodes("//a[starts-with(@href, '/judge/pt/problems/view/')]");
-                var problemNumber = link.FirstOrDefault()?.GetAttributeValue("href", "").Split('/').Last() ?? "error";
-
-                if (code != null)
+                // Parse the JSON string into a JsonDocument
+                var jsonDocument = JsonDocument.Parse(WebUtility.HtmlDecode(option.InnerHtml));
+                var code = jsonDocument.RootElement.GetProperty("id").GetInt32().ToString();
+                var extension = jsonDocument.RootElement.GetProperty("extension").GetString();
+                if (extension != null)
                 {
-                    string filePath = $"codes/{problemNumber}.cpp";
-                    try
-                    {
-                        // Escrever texto no arquivo
-                        using (StreamWriter writer = new StreamWriter(filePath))
-                        {
-                            writer.Write(HttpUtility.HtmlDecode(code.InnerHtml));
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine("Ocorreu um erro ao escrever no arquivo: " + ex.Message);
-                    }
+                    extensions.Add(code, extension);
                 }
-                else
-                {
-                    Console.WriteLine("Nenhum codigo encontrado na página.");
-                }
-            }
-            catch (HttpRequestException e)
-            {
-                Console.WriteLine($"Erro ao fazer a solicitação HTTP: {e.Message}");
             }
         }
+        catch (HttpRequestException e)
+        {
+            Console.WriteLine($"Erro ao fazer a solicitação HTTP: {e.Message}");
+        }
+
+        return extensions;
+    }
+
+    static string? GetValueFromArgs(string[] args, string paramName)
+    {
+        for (var i = 0; i < args.Length - 1; i++)
+        {
+            if (args[i].Equals($"--{paramName}", StringComparison.OrdinalIgnoreCase))
+            {
+                return args[i + 1];
+            }
+        }
+
+        return null;
     }
 }
